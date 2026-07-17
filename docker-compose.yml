@@ -20,10 +20,11 @@ services:
         condition: service_healthy
     environment:
       MONGODB_URI: mongodb://mongo:27017/splitstream
-      JWT_ACCESS_SECRET: change-me-access
-      JWT_REFRESH_SECRET: change-me-refresh
-      CLIENT_ORIGIN: http://localhost:4000
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:5173}
       PORT: 4000
+      GROQ_API_KEY: ${GROQ_API_KEY:-}  # <--- Added this to pass your key into the container!
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
