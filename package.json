@@ -5,19 +5,21 @@
   "description": "Real-time expense splitter with React, Express, Socket.io, Prisma, and PostgreSQL.",
   "main": "server/index.js",
   "scripts": {
-    "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "nodemon server/index.js",
-    "dev:client": "vite --host 0.0.0.0",
-    "start": "node server/index.js",
-    "build": "vite build",
+    "dev": "concurrently \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "dev:server": "npm --prefix backend run dev",
+    "dev:client": "npm --prefix frontend run dev",
+    "start": "npm --prefix backend run start",
+    "build": "npm --prefix frontend run build",
     "test": "jest --runInBand",
-    "db:ping": "node -e \"require('dotenv').config(); require('./server/utils/db')().then(()=>{console.log('MongoDB connected'); process.exit(0)}).catch(err=>{console.error(err); process.exit(1)})\""
+    "db:ping": "node -e \"require('dotenv').config(); require('./backend/server/utils/db')().then(()=>{console.log('MongoDB connected'); process.exit(0)}).catch(err=>{console.error(err); process.exit(1)})\""
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "@reduxjs/toolkit": "^2.3.0",
     "@vitejs/plugin-react": "^4.3.3",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "date-fns": "^4.4.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.2",
@@ -26,8 +28,10 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-redux": "^9.1.2",
+    "recharts": "^3.9.1",
     "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "supertest": "^7.2.2"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",
