@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { ArrowRight, HandCoins, Hotel, Plane, Plus, ReceiptText, ShoppingBag, Trash2, Utensils, UserPlus, Users } from "lucide-react";
+import { ArrowRight, HandCoins, Hotel, Plane, Plus, ReceiptText, ShoppingBag, Trash2, Utensils, UserPlus, Users, Pencil } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip } from "recharts";
-import { addMember, deleteExpense, settleUp } from "../features/groupsSlice";
+import { addMember, deleteExpense, settleUp, updateExpense } from "../features/groupsSlice";
 import AddExpenseModal from "./AddExpenseModal";
 import SettleModal from "./SettleModal";
 import { Card, EmptyState, formatMoney } from "./ui";
@@ -23,6 +23,7 @@ export default function GroupDetail({ groupId }) {
   const [showExpense, setShowExpense] = useState(false);
   const [showSettle, setShowSettle] = useState(false);
   const [email, setEmail] = useState("");
+  const [editingExpense, setEditingExpense] = useState(null);
 
   const selectedDebt = useMemo(() => current?.balances?.simplified?.[0] || null, [current]);
   const trend = useMemo(() => buildTrend(current?.expenses || []), [current]);
@@ -94,9 +95,8 @@ export default function GroupDetail({ groupId }) {
           {tabs.map((item) => (
             <button
               key={item}
-              className={`focus-ring rounded-t-md px-4 py-3 text-sm font-black capitalize ${
-                tab === item ? "bg-[#f2f7f1] text-ink" : "text-ink/55 hover:text-ink"
-              }`}
+              className={`focus-ring rounded-t-md px-4 py-3 text-sm font-black capitalize ${tab === item ? "bg-[#f2f7f1] text-ink" : "text-ink/55 hover:text-ink"
+                }`}
               onClick={() => setTab(item)}
             >
               {item}
@@ -105,13 +105,29 @@ export default function GroupDetail({ groupId }) {
         </div>
 
         <div className="p-5">
-          {tab === "expenses" && <Expenses group={current} onDelete={(id) => dispatch(deleteExpense(id))} onAdd={() => setShowExpense(true)} />}
+          {tab === "expenses" && (
+            <Expenses
+              group={current}
+              onDelete={(id) => dispatch(deleteExpense(id))}
+              onEdit={(expense) => setEditingExpense(expense)}
+              onAdd={() => setShowExpense(true)}
+            />
+          )}
           {tab === "balances" && <Balances group={current} />}
           {tab === "members" && <Members group={current} email={email} setEmail={setEmail} submitMember={submitMember} />}
         </div>
       </Card>
 
-      {showExpense && <AddExpenseModal group={current} onClose={() => setShowExpense(false)} />}
+      {(showExpense || editingExpense) && (
+        <AddExpenseModal
+          group={current}
+          initialData={editingExpense}
+          onClose={() => {
+            setShowExpense(false);
+            setEditingExpense(null);
+          }}
+        />
+      )}
       {showSettle && (
         <SettleModal
           group={current}
@@ -138,7 +154,7 @@ function Metric({ label, value, icon: Icon }) {
   );
 }
 
-function Expenses({ group, onDelete, onAdd }) {
+function Expenses({ group, onDelete, onEdit, onAdd }) {
   if (group.expenses.length === 0) {
     return (
       <EmptyState
@@ -177,6 +193,9 @@ function Expenses({ group, onDelete, onAdd }) {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-lg font-black">{formatMoney(expense.amount)}</span>
+                <button className="focus-ring rounded-md p-2 text-ink/50 hover:bg-ink/5" onClick={() => onEdit(expense)} title="Edit expense">
+                  <Pencil className="h-4 w-4" />
+                </button>
                 <button className="focus-ring rounded-md p-2 text-coral hover:bg-coral/10" onClick={() => onDelete(expense.id)} title="Delete expense">
                   <Trash2 className="h-4 w-4" />
                 </button>

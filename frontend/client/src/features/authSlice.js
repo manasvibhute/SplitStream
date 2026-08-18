@@ -67,6 +67,8 @@ const authSlice = createSlice({
 });
 
 function saveAuth(state, action) {
+
+  console.log(action.payload);
   state.status = "idle";
   state.user = action.payload.user;
   state.accessToken = action.payload.accessToken;

@@ -101,6 +101,32 @@ describe("POST /api/expenses/parse", () => {
     expect(response.body.parsed.splitType).toBe("unclear");
   });
 
+  test("strips markdown code fences before JSON parsing", async () => {
+    mockCreate.mockResolvedValue({
+      content: [
+        {
+          type: "text",
+          text: "```json\n{\n  \"amount\": 2100,\n  \"description\": \"Dinner\",\n  \"participants\": [\"user-1\", \"user-2\", \"user-3\"],\n  \"paidBy\": \"user-1\",\n  \"splitType\": \"equal\",\n  \"splitAmounts\": {},\n  \"confidence\": \"high\",\n  \"unknownParticipants\": []\n}\n```",
+        },
+      ],
+    });
+
+    const response = await request(createApp())
+      .post("/api/expenses/parse")
+      .set("Authorization", "Bearer token")
+      .send({ text: "Rida paid 2100 for dinner, split equally between Rida, ABC, and Manasvi", groupMembers });
+
+    expect(response.status).toBe(200);
+    expect(response.body.parsed).toMatchObject({
+      amount: 2100,
+      description: "Dinner",
+      paidBy: "user-1",
+      splitType: "equal",
+      confidence: "high",
+      participants: ["user-1", "user-2", "user-3"],
+    });
+  });
+
   test("rejects empty text", async () => {
     const response = await request(createApp())
       .post("/api/expenses/parse")

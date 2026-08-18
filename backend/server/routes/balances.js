@@ -1,6 +1,5 @@
 const express = require("express");
-const Group = require("../models/Group");
-const Settlement = require("../models/Settlement");
+const { prisma } = require("../utils/db");
 const requireAuth = require("../middleware/auth");
 const { assertGroupMember, getGroupSnapshot } = require("../services/groupService");
 
@@ -25,13 +24,23 @@ router.post("/groups/:id/settle", async (req, res, next) => {
       return res.status(400).json({ message: "From user, to user, and positive amount are required." });
     }
 
-    const group = await Group.findById(req.params.id).lean();
-    const memberIds = new Set(group.members.map((member) => member.user.toString()));
+    const members = await prisma.groupMember.findMany({
+      where: { groupId: req.params.id },
+      select: { userId: true },
+    });
+    const memberIds = new Set(members.map((m) => m.userId));
     if (!memberIds.has(fromUserId) || !memberIds.has(toUserId)) {
       return res.status(400).json({ message: "Settlement users must be group members." });
     }
 
-    await Settlement.create({ group: req.params.id, fromUser: fromUserId, toUser: toUserId, amount: Number(amount) });
+    await prisma.settlement.create({
+      data: {
+        groupId: req.params.id,
+        fromUserId,
+        toUserId,
+        amount: Number(amount),
+      },
+    });
 
     const snapshot = await getGroupSnapshot(req.params.id);
     req.io.to(req.params.id).emit("settlement:made", snapshot);

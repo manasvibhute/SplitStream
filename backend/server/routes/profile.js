@@ -1,6 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
-const User = require("../models/User");
+const { prisma } = require("../utils/db");
 const requireAuth = require("../middleware/auth");
 const { signAccessToken, signRefreshToken } = require("../utils/tokens");
 
@@ -16,7 +16,11 @@ router.patch("/", async (req, res, next) => {
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ message: "Name is required." });
 
-    const user = await User.findByIdAndUpdate(req.user.sub, { name }, { new: true });
+    const user = await prisma.user.update({
+      where: { id: req.user.sub },
+      data: { name },
+    });
+
     res.json({
       user: publicUser(user),
       accessToken: signAccessToken(user),
@@ -34,13 +38,20 @@ router.patch("/password", async (req, res, next) => {
       return res.status(400).json({ message: "New password must be at least 6 characters." });
     }
 
-    const user = await User.findById(req.user.sub);
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.sub },
+    });
+
     if (!user || !(await bcrypt.compare(currentPassword || "", user.passwordHash))) {
       return res.status(401).json({ message: "Current password is incorrect." });
     }
 
-    user.passwordHash = await bcrypt.hash(newPassword, 12);
-    await user.save();
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await prisma.user.update({
+      where: { id: req.user.sub },
+      data: { passwordHash },
+    });
+
     res.json({ message: "Password updated." });
   } catch (error) {
     next(error);

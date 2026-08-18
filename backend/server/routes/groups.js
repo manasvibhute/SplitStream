@@ -1,7 +1,5 @@
 const express = require("express");
-const Group = require("../models/Group");
-const User = require("../models/User");
-const Expense = require("../models/Expense");
+const { prisma } = require("../utils/db");
 const requireAuth = require("../middleware/auth");
 const { assertGroupMember, getGroupSnapshot } = require("../services/groupService");
 
@@ -15,12 +13,16 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ message: "Group name is required." });
     }
 
-    const group = await Group.create({
-      name: name.trim(),
-      members: [{ user: req.user.sub }],
+    const group = await prisma.group.create({
+      data: {
+        name: name.trim(),
+        members: {
+          create: { userId: req.user.sub },
+        },
+      },
     });
 
-    res.status(201).json(await getGroupSnapshot(group._id.toString()));
+    res.status(201).json(await getGroupSnapshot(group.id));
   } catch (error) {
     next(error);
   }
@@ -28,22 +30,30 @@ router.post("/", async (req, res, next) => {
 
 router.get("/", async (req, res, next) => {
   try {
-    const groups = await Group.find({ "members.user": req.user.sub }).sort({ createdAt: -1 }).lean();
-    const groupIds = groups.map((group) => group._id);
-    const lastExpenses = await Expense.aggregate([
-      { $match: { group: { $in: groupIds } } },
-      { $sort: { createdAt: -1 } },
-      { $group: { _id: "$group", lastExpenseAt: { $first: "$createdAt" } } },
-    ]);
-    const lastByGroup = new Map(lastExpenses.map((expense) => [expense._id.toString(), expense.lastExpenseAt]));
+    const memberships = await prisma.groupMember.findMany({
+      where: { userId: req.user.sub },
+      include: {
+        group: {
+          include: {
+            members: true,
+            expenses: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: { createdAt: true },
+            },
+          },
+        },
+      },
+      orderBy: { joinedAt: "desc" },
+    });
 
     res.json(
-      groups.map((group) => ({
-        id: group._id.toString(),
+      memberships.map(({ group }) => ({
+        id: group.id,
         name: group.name,
         createdAt: group.createdAt,
         memberCount: group.members.length,
-        lastExpenseAt: lastByGroup.get(group._id.toString()) || null,
+        lastExpenseAt: group.expenses[0]?.createdAt || null,
       }))
     );
   } catch (error) {
@@ -63,15 +73,27 @@ router.get("/:id", async (req, res, next) => {
 router.post("/:id/members", async (req, res, next) => {
   try {
     await assertGroupMember(req.params.id, req.user.sub);
-    const user = await User.findOne({ email: String(req.body.email || "").toLowerCase() });
+    const user = await prisma.user.findUnique({
+      where: { email: String(req.body.email || "").toLowerCase().trim() },
+    });
     if (!user) return res.status(404).json({ message: "No user exists with that email." });
 
-    const group = await Group.findById(req.params.id);
-    if (group.members.some((member) => member.user.toString() === user.id)) {
+    const existingMember = await prisma.groupMember.findUnique({
+      where: {
+        groupId_userId: { groupId: req.params.id, userId: user.id },
+      },
+    });
+
+    if (existingMember) {
       return res.status(409).json({ message: "That user is already in the group." });
     }
-    group.members.push({ user: user.id });
-    await group.save();
+
+    await prisma.groupMember.create({
+      data: {
+        groupId: req.params.id,
+        userId: user.id,
+      },
+    });
 
     const snapshot = await getGroupSnapshot(req.params.id);
     req.io.to(req.params.id).emit("member:joined", snapshot);

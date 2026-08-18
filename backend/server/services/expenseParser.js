@@ -4,7 +4,24 @@ const AnthropicModule = require("@anthropic-ai/sdk");
 const Anthropic = AnthropicModule.default || AnthropicModule;
 
 const ANTHROPIC_MODEL = "claude-sonnet-4-6";
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+const GROQ_FALLBACK_MODELS = [];
+
+function stripJsonFence(rawText) {
+  if (typeof rawText !== "string") {
+    return "";
+  }
+
+  let cleaned = rawText.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    cleaned = jsonMatch[0];
+  }
+
+  return cleaned;
+}
 
 function validateParseRequest(text, groupMembers) {
   if (!text || !String(text).trim()) {
@@ -22,7 +39,7 @@ function validateParseRequest(text, groupMembers) {
   return null;
 }
 
-async function parseExpenseText({ text, groupMembers }) {
+async function parseExpenseText({ text, groupMembers, currentUserId }) {
 
   const groqKey = process.env.GROQ_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -42,10 +59,14 @@ async function parseExpenseText({ text, groupMembers }) {
     name: member.name
   }));
 
+  console.log("CURRENT USER ID:", currentUserId);
+  console.log("GROUP MEMBERS:", memberList);
+
   if (groqKey) {
     return parseExpenseTextWithGroq({
       text,
       memberList,
+      currentUserId,
       apiKey: groqKey
     });
   }
@@ -60,6 +81,7 @@ async function parseExpenseText({ text, groupMembers }) {
 async function parseExpenseTextWithGroq({
   text,
   memberList,
+  currentUserId,
   apiKey
 }) {
 
@@ -138,42 +160,70 @@ Result:
 Group Members:
 ${JSON.stringify(memberList)}
 
+Current user ID:
+${currentUserId}
+
+IMPORTANT:
+- "I", "me", "my", and "mine" always refer to the current user.
+- When the expense says "me", use the current user's ID.
+- When the expense says "I paid", set paidBy to the current user's ID.
+- When the expense says "me and X", include the current user's ID and X's ID in participants.
+
 Expense:
 ${text}
 `;
 
-  const completion =
-    await client.chat.completions.create({
+  const modelCandidates = [GROQ_MODEL];
+  const seenModels = new Set();
 
-      model: GROQ_MODEL,
+  let lastError = null;
 
-      temperature: 0,
+  for (const modelName of modelCandidates) {
+    if (seenModels.has(modelName)) {
+      continue;
+    }
+    seenModels.add(modelName);
 
-      response_format: {
-        type: "json_object"
-      },
+    try {
+      const completion = await client.chat.completions.create({
+        model: modelName,
+        temperature: 0.6,
+        include_reasoning: false,
+        response_format: {
+          type: "json_object"
+        },
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
+      });
 
-      messages: [
-        {
-          role: "user",
-          content: prompt
-        }
-      ]
-    });
+      const raw = stripJsonFence(completion.choices[0].message.content);
 
-  const raw =
-    completion.choices[0].message.content
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
+      console.log("Groq raw:");
+      console.log(raw);
 
-  console.log("Groq raw:");
-  console.log(raw);
+      return normalizeParsedExpense(
+        JSON.parse(raw),
+        memberList
+      );
+    } catch (error) {
+      lastError = error;
+      console.warn(`Groq model failed: ${modelName}`, error.message || error);
+      if (error?.status === 404 || error?.statusCode === 404 || error?.message?.includes("does not exist")) {
+        continue;
+      }
+      break;
+    }
+  }
 
-  return normalizeParsedExpense(
-    JSON.parse(raw),
-    memberList
-  );
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error("No Groq model could parse the expense.");
 }
 
 async function parseExpenseTextWithAnthropic({

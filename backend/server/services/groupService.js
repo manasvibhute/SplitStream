@@ -1,20 +1,43 @@
-const Group = require("../models/Group");
-const Expense = require("../models/Expense");
-const Settlement = require("../models/Settlement");
+const { prisma } = require("../utils/db");
 const { simplifyDebts } = require("./splitLogic");
 
 async function assertGroupMember(groupId, userId) {
-  const group = await Group.findOne({ _id: groupId, "members.user": userId });
-  if (!group) {
+  const member = await prisma.groupMember.findUnique({
+    where: {
+      groupId_userId: { groupId, userId },
+    },
+  });
+
+  if (!member) {
     const error = new Error("Group not found.");
     error.statusCode = 404;
     throw error;
   }
-  return group;
+
+  return member;
 }
 
 async function getGroupSnapshot(groupId) {
-  const group = await Group.findById(groupId).populate("members.user").lean();
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    include: {
+      members: {
+        include: { user: true },
+      },
+      expenses: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          paidBy: true,
+          splits: {
+            include: { user: true },
+          },
+        },
+      },
+      settlements: {
+        orderBy: { settledAt: "desc" },
+      },
+    },
+  });
 
   if (!group) {
     const error = new Error("Group not found.");
@@ -22,50 +45,44 @@ async function getGroupSnapshot(groupId) {
     throw error;
   }
 
-  const expenses = await Expense.find({ group: groupId })
-    .populate("paidBy")
-    .populate("splits.user")
-    .sort({ createdAt: -1 })
-    .lean();
-  const settlements = await Settlement.find({ group: groupId }).sort({ settledAt: -1 }).lean();
-  const snapshot = serializeGroup({ ...group, expenses, settlements });
+  const snapshot = serializeGroup(group);
   const balances = calculateGroupBalances(snapshot);
   return { ...snapshot, balances };
 }
 
 function serializeGroup(group) {
   return {
-    id: group._id.toString(),
+    id: group.id,
     name: group.name,
     createdAt: group.createdAt,
     members: group.members.map(({ user, joinedAt }) => ({
-      id: user._id.toString(),
+      id: user.id,
       name: user.name,
       email: user.email,
       joinedAt,
     })),
     expenses: group.expenses.map((expense) => ({
-      id: expense._id.toString(),
+      id: expense.id,
       description: expense.description,
       amount: Number(expense.amount),
       splitType: expense.splitType,
       category: expense.category || "Other",
       createdAt: expense.createdAt,
       paidBy: {
-        id: expense.paidBy._id.toString(),
+        id: expense.paidBy.id,
         name: expense.paidBy.name,
         email: expense.paidBy.email,
       },
       splits: expense.splits.map((split) => ({
-        userId: split.user._id.toString(),
+        userId: split.user.id,
         name: split.user.name,
         amountOwed: Number(split.amountOwed),
       })),
     })),
     settlements: group.settlements.map((settlement) => ({
-      id: settlement._id.toString(),
-      fromUserId: settlement.fromUser.toString(),
-      toUserId: settlement.toUser.toString(),
+      id: settlement.id,
+      fromUserId: settlement.fromUserId,
+      toUserId: settlement.toUserId,
       amount: Number(settlement.amount),
       settledAt: settlement.settledAt,
     })),

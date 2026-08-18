@@ -1,7 +1,5 @@
 const express = require("express");
-const Group = require("../models/Group");
-const Expense = require("../models/Expense");
-const Settlement = require("../models/Settlement");
+const { prisma } = require("../utils/db");
 const requireAuth = require("../middleware/auth");
 const { getGroupSnapshot } = require("../services/groupService");
 
@@ -15,23 +13,46 @@ router.get("/", async (req, res, next) => {
     const from = req.query.from ? new Date(req.query.from) : null;
     const to = req.query.to ? new Date(req.query.to) : null;
 
-    const groups = await Group.find({ "members.user": userId }).populate("members.user").sort({ createdAt: -1 }).lean();
-    const allowedGroupIds = groups.map((group) => group._id.toString());
-    const groupIds = groupFilter && allowedGroupIds.includes(groupFilter) ? [groupFilter] : allowedGroupIds;
-    const dateMatch = {};
-    if (from && !Number.isNaN(from.getTime())) dateMatch.$gte = from;
-    if (to && !Number.isNaN(to.getTime())) dateMatch.$lte = to;
+    const userMemberships = await prisma.groupMember.findMany({
+      where: { userId },
+      include: {
+        group: {
+          include: {
+            members: { include: { user: true } },
+          },
+        },
+      },
+      orderBy: { joinedAt: "desc" },
+    });
 
-    const expenseMatch = { group: { $in: groupIds } };
-    if (Object.keys(dateMatch).length) expenseMatch.createdAt = dateMatch;
+    const groups = userMemberships.map((m) => m.group);
+    const allowedGroupIds = groups.map((group) => group.id);
+    const groupIds = groupFilter && allowedGroupIds.includes(groupFilter) ? [groupFilter] : allowedGroupIds;
+
+    const expenseWhere = { groupId: { in: groupIds } };
+    if ((from && !Number.isNaN(from.getTime())) || (to && !Number.isNaN(to.getTime()))) {
+      expenseWhere.createdAt = {};
+      if (from && !Number.isNaN(from.getTime())) expenseWhere.createdAt.gte = from;
+      if (to && !Number.isNaN(to.getTime())) expenseWhere.createdAt.lte = to;
+    }
 
     const [expenses, settlements, snapshots] = await Promise.all([
-      Expense.find(expenseMatch).populate("paidBy").populate("splits.user").sort({ createdAt: -1 }).lean(),
-      Settlement.find({ group: { $in: groupIds } }).sort({ settledAt: -1 }).lean(),
+      prisma.expense.findMany({
+        where: expenseWhere,
+        orderBy: { createdAt: "desc" },
+        include: {
+          paidBy: true,
+          splits: { include: { user: true } },
+        },
+      }),
+      prisma.settlement.findMany({
+        where: { groupId: { in: groupIds } },
+        orderBy: { settledAt: "desc" },
+      }),
       Promise.all(allowedGroupIds.map((id) => getGroupSnapshot(id))),
     ]);
 
-    const groupNameById = new Map(groups.map((group) => [group._id.toString(), group.name]));
+    const groupNameById = new Map(groups.map((group) => [group.id, group.name]));
     const dashboard = buildDashboard(userId, snapshots, expenses, settlements);
     const charts = buildCharts(userId, expenses, groupNameById);
     const activity = buildActivity(groups, expenses, settlements, groupNameById);
@@ -71,7 +92,7 @@ function buildDashboard(userId, groups, expenses, settlements) {
     expensesLogged: expenses.length,
     lifetimeSettled: round(
       settlements
-        .filter((settlement) => settlement.fromUser.toString() === userId || settlement.toUser.toString() === userId)
+        .filter((settlement) => settlement.fromUserId === userId || settlement.toUserId === userId)
         .reduce((sum, settlement) => sum + Number(settlement.amount), 0)
     ),
   };
@@ -86,12 +107,12 @@ function buildCharts(userId, expenses, groupNameById) {
     const month = new Date(expense.createdAt).toISOString().slice(0, 7);
     const monthEntry = byMonth.get(month) || { month, spending: 0, paid: 0, owed: 0 };
     monthEntry.spending += Number(expense.amount);
-    if (expense.paidBy._id.toString() === userId) monthEntry.paid += Number(expense.amount);
-    const split = expense.splits.find((item) => item.user._id.toString() === userId);
+    if (expense.paidBy.id === userId) monthEntry.paid += Number(expense.amount);
+    const split = expense.splits.find((item) => item.user.id === userId);
     monthEntry.owed += split ? Number(split.amountOwed) : 0;
     byMonth.set(month, monthEntry);
 
-    const groupId = expense.group.toString();
+    const groupId = expense.groupId;
     byGroup.set(groupId, (byGroup.get(groupId) || 0) + Number(expense.amount));
 
     const category = expense.category || "Other";
@@ -113,9 +134,9 @@ function buildActivity(groups, expenses, settlements, groupNameById) {
   groups.forEach((group) => {
     group.members.forEach((member) => {
       groupEvents.push({
-        id: `${group._id}-${member.user._id}-joined`,
+        id: `${group.id}-${member.user.id}-joined`,
         type: "member_joined",
-        groupId: group._id.toString(),
+        groupId: group.id,
         groupName: group.name,
         actorName: member.user.name,
         label: `${member.user.name} joined ${group.name}`,
@@ -126,10 +147,10 @@ function buildActivity(groups, expenses, settlements, groupNameById) {
   });
 
   const expenseEvents = expenses.map((expense) => ({
-    id: expense._id.toString(),
+    id: expense.id,
     type: "expense_added",
-    groupId: expense.group.toString(),
-    groupName: groupNameById.get(expense.group.toString()) || "Group",
+    groupId: expense.groupId,
+    groupName: groupNameById.get(expense.groupId) || "Group",
     actorName: expense.paidBy.name,
     label: `${expense.paidBy.name} added ${expense.description}`,
     amount: Number(expense.amount),
@@ -138,10 +159,10 @@ function buildActivity(groups, expenses, settlements, groupNameById) {
   }));
 
   const settlementEvents = settlements.map((settlement) => ({
-    id: settlement._id.toString(),
+    id: settlement.id,
     type: "settlement_made",
-    groupId: settlement.group.toString(),
-    groupName: groupNameById.get(settlement.group.toString()) || "Group",
+    groupId: settlement.groupId,
+    groupName: groupNameById.get(settlement.groupId) || "Group",
     actorName: null,
     label: "Settlement recorded",
     amount: Number(settlement.amount),

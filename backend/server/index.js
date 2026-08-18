@@ -15,7 +15,7 @@ const balanceRoutes = require("./routes/balances");
 const analyticsRoutes = require("./routes/analytics");
 const profileRoutes = require("./routes/profile");
 const registerSockets = require("./sockets");
-const connectDb = require("./utils/db");
+const { connectDb } = require("./utils/db");
 
 const app = express();
 const server = http.createServer(app);
@@ -71,7 +71,7 @@ connectDb()
     databaseStatus = connection ? "connected" : "unavailable";
 
     if (!connection) {
-      console.warn("SplitStream API listening without MongoDB. API routes that require persistence will fail until a database is available.");
+      console.warn("SplitStream API listening without PostgreSQL connection.");
     }
 
     server.listen(port, () => {
@@ -79,6 +79,6 @@ connectDb()
     });
   })
   .catch((error) => {
-    console.error("Failed to connect to MongoDB", error);
+    console.error("Failed to connect to PostgreSQL", error);
     process.exit(1);
   });

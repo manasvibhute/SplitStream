@@ -1,0 +1,106 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  memberships         GroupMember[]
+  expensesPaid        Expense[]      @relation("PaidBy")
+  splits              ExpenseSplit[]
+  sentSettlements     Settlement[]   @relation("SentSettlements")
+  receivedSettlements Settlement[]   @relation("ReceivedSettlements")
+
+  @@map("users")
+}
+
+model Group {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  members     GroupMember[]
+  expenses    Expense[]
+  settlements Settlement[]
+
+  @@map("groups")
+}
+
+model GroupMember {
+  groupId  String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@map("group_members")
+}
+
+enum SplitType {
+  equal
+  percentage
+  custom
+}
+
+enum Category {
+  Food
+  Travel
+  Stay
+  Shopping
+  Other
+}
+
+model Expense {
+  id          String    @id @default(uuid())
+  groupId     String
+  paidById    String
+  description String
+  amount      Float
+  splitType   SplitType
+  category    Category  @default(Other)
+  createdAt   DateTime  @default(now())
+
+  group  Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paidBy User           @relation("PaidBy", fields: [paidById], references: [id], onDelete: Cascade)
+  splits ExpenseSplit[]
+
+  @@map("expenses")
+}
+
+model ExpenseSplit {
+  id         String @id @default(uuid())
+  expenseId  String
+  userId     String
+  amountOwed Float
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("expense_splits")
+}
+
+model Settlement {
+  id         String   @id @default(uuid())
+  groupId    String
+  fromUserId String
+  toUserId   String
+  amount     Float
+  settledAt  DateTime @default(now())
+
+  group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  fromUser User  @relation("SentSettlements", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser   User  @relation("ReceivedSettlements", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  @@map("settlements")
+}

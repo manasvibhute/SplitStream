@@ -42,6 +42,16 @@ export const deleteExpense = createAsyncThunk("groups/deleteExpense", async (exp
   })
 );
 
+export const updateExpense = createAsyncThunk(
+  "groups/updateExpense",
+  async ({ expenseId, updates }, { getState }) =>
+    apiRequest(`/api/expenses/${expenseId}`, {
+      method: "PUT",
+      token: getState().auth.accessToken,
+      body: JSON.stringify(updates),
+    })
+);
+
 export const settleUp = createAsyncThunk("groups/settleUp", async ({ groupId, settlement }, { getState }) =>
   apiRequest(`/api/groups/${groupId}/settle`, {
     method: "POST",
@@ -83,7 +93,14 @@ const groupsSlice = createSlice({
       )
       .addMatcher(
         (action) =>
-          [fetchGroup.fulfilled.type, addMember.fulfilled.type, addExpense.fulfilled.type, deleteExpense.fulfilled.type, settleUp.fulfilled.type].includes(
+          [
+            fetchGroup.fulfilled.type,
+            addMember.fulfilled.type,
+            addExpense.fulfilled.type,
+            deleteExpense.fulfilled.type,
+            updateExpense.fulfilled.type,
+            settleUp.fulfilled.type,
+          ].includes(
             action.type
           ),
         (state, action) => {

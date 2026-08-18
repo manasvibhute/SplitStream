@@ -1,25 +1,51 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { Sparkles, X } from "lucide-react";
-import { addExpense } from "../features/groupsSlice";
+import { addExpense, updateExpense } from "../features/groupsSlice";
 import { apiRequest } from "../lib/api";
 
-export default function AddExpenseModal({ group, onClose }) {
+export default function AddExpenseModal({ group, initialData, onClose }) {
   const dispatch = useDispatch();
   const token = useSelector((state) => state.auth.accessToken);
+  const isEditing = Boolean(initialData);
+
   const [naturalText, setNaturalText] = useState("");
   const [parseLoading, setParseLoading] = useState(false);
   const [parseError, setParseError] = useState("");
   const [clarification, setClarification] = useState(null);
   const [unknownParticipants, setUnknownParticipants] = useState([]);
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [splitType, setSplitType] = useState("equal");
-  const [category, setCategory] = useState("Food");
-  const [selected, setSelected] = useState(
-    () => new Set(group.members.map((member) => member.id))
+  const [description, setDescription] = useState(initialData?.description || "");
+  const [amount, setAmount] = useState(initialData ? String(initialData.amount) : "");
+  const [splitType, setSplitType] = useState(initialData?.splitType || "equal");
+  const [category, setCategory] = useState(initialData?.category || "Food");
+  const [selected, setSelected] = useState(() =>
+    initialData
+      ? new Set(initialData.splits.map((split) => split.userId))
+      : new Set(group.members.map((member) => member.id))
   );
-  const [values, setValues] = useState({});
+  const [values, setValues] = useState(() => {
+    if (!initialData) return {};
+    const prefill = {};
+    initialData.splits.forEach((split) => {
+      prefill[split.userId] = String(split.amountOwed);
+    });
+    return prefill;
+  });
+
+  // Re-sync if a different expense is opened for editing while modal stays mounted
+  useEffect(() => {
+    if (!initialData) return;
+    setDescription(initialData.description || "");
+    setAmount(String(initialData.amount));
+    setSplitType(initialData.splitType || "equal");
+    setCategory(initialData.category || "Food");
+    setSelected(new Set(initialData.splits.map((split) => split.userId)));
+    const prefill = {};
+    initialData.splits.forEach((split) => {
+      prefill[split.userId] = String(split.amountOwed);
+    });
+    setValues(prefill);
+  }, [initialData]);
 
   const participants = useMemo(
     () =>
@@ -35,7 +61,13 @@ export default function AddExpenseModal({ group, onClose }) {
 
   async function submit(event) {
     event.preventDefault();
-    await dispatch(addExpense({ groupId: group.id, expense: { description, amount: Number(amount), splitType, category, splits: participants } }));
+    const payload = { description, amount: Number(amount), splitType, category, splits: participants };
+
+    if (isEditing) {
+      await dispatch(updateExpense({ expenseId: initialData.id, updates: payload }));
+    } else {
+      await dispatch(addExpense({ groupId: group.id, expense: payload }));
+    }
     onClose();
   }
 
@@ -57,7 +89,6 @@ export default function AddExpenseModal({ group, onClose }) {
       });
 
       const parsed = response.parsed || {};
-      // Show warning for unknown participants
       setUnknownParticipants(parsed.unknownParticipants || []);
       if (parsed.amount != null) {
         setAmount(String(parsed.amount));
@@ -66,24 +97,24 @@ export default function AddExpenseModal({ group, onClose }) {
       if (Array.isArray(parsed.participants) && parsed.participants.length > 0) {
         setSelected(new Set(parsed.participants));
       } else {
-        setSelected(new Set()); // Clear selection
+        setSelected(new Set());
       }
       if (parsed.splitType === "equal") {
         setSplitType("equal");
         setValues({});
       }
-      
+
       if (parsed.splitType === "unequal") {
         setSplitType("custom");
-      
+
         const customValues = {};
-      
+
         if (parsed.splitAmounts) {
           Object.entries(parsed.splitAmounts).forEach(([id, amount]) => {
             customValues[id] = String(amount);
           });
         }
-      
+
         setValues(customValues);
       }
 
@@ -107,52 +138,54 @@ export default function AddExpenseModal({ group, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4">
       <form onSubmit={submit} className="max-h-[92vh] w-full max-w-2xl overflow-auto rounded-lg bg-white p-5 shadow-panel sm:p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xl font-black">Add expense</h2>
+          <h2 className="text-xl font-black">{isEditing ? "Edit expense" : "Add expense"}</h2>
           <button type="button" className="focus-ring rounded-md p-2 hover:bg-ink/5" onClick={onClose} title="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="mb-5 rounded-lg border border-mint/25 bg-mint/10 p-3">
-          <label className="mb-2 block text-sm font-black text-ink/70">
-            <Sparkles className="inline h-4 w-4 text-mint" /> Natural-language entry
-          </label>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              className="focus-ring min-w-0 flex-1 rounded-md border border-ink/15 px-3 py-3"
-              value={naturalText}
-              maxLength={300}
-              onChange={(event) => setNaturalText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  parseNaturalExpense();
-                }
-              }}
-              placeholder="Try: 'Paid 500 for dinner with Priya and Rahul'"
-            />
-            <button
-              type="button"
-              onClick={parseNaturalExpense}
-              className="focus-ring rounded-md bg-mint px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={parseLoading || !naturalText.trim()}
-            >
-              {parseLoading ? "Parsing..." : "Parse"}
-            </button>
+        {!isEditing && (
+          <div className="mb-5 rounded-lg border border-mint/25 bg-mint/10 p-3">
+            <label className="mb-2 block text-sm font-black text-ink/70">
+              <Sparkles className="inline h-4 w-4 text-mint" /> Natural-language entry
+            </label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                className="focus-ring min-w-0 flex-1 rounded-md border border-ink/15 px-3 py-3"
+                value={naturalText}
+                maxLength={300}
+                onChange={(event) => setNaturalText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    parseNaturalExpense();
+                  }
+                }}
+                placeholder="Try: 'Paid 500 for dinner with Priya and Rahul'"
+              />
+              <button
+                type="button"
+                onClick={parseNaturalExpense}
+                className="focus-ring rounded-md bg-mint px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={parseLoading || !naturalText.trim()}
+              >
+                {parseLoading ? "Parsing..." : "Parse"}
+              </button>
+            </div>
+            {clarification && (
+              <p className="mt-2 rounded-md bg-saffron/20 px-3 py-2 text-sm font-bold text-ink/70">
+                Some details need review. Fix the highlighted fields before saving.
+              </p>
+            )}
+            {unknownParticipants.length > 0 && (
+              <p className="mt-2 rounded-md bg-yellow-100 px-3 py-2 text-sm font-bold text-yellow-800">
+                These people are not in the group:{" "}
+                {unknownParticipants.join(", ")}
+              </p>
+            )}
+            {parseError && <p className="mt-2 rounded-md bg-coral/10 px-3 py-2 text-sm font-bold text-coral">{parseError}</p>}
           </div>
-          {clarification && (
-            <p className="mt-2 rounded-md bg-saffron/20 px-3 py-2 text-sm font-bold text-ink/70">
-              Some details need review. Fix the highlighted fields before saving.
-            </p>
-          )}
-          {unknownParticipants.length > 0 && (
-            <p className="mt-2 rounded-md bg-yellow-100 px-3 py-2 text-sm font-bold text-yellow-800">
-              These people are not in the group:{" "}
-              {unknownParticipants.join(", ")}
-            </p>
-          )}
-          {parseError && <p className="mt-2 rounded-md bg-coral/10 px-3 py-2 text-sm font-bold text-coral">{parseError}</p>}
-        </div>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Description" value={description} onChange={setDescription} highlight={needsDescription} />
@@ -208,7 +241,9 @@ export default function AddExpenseModal({ group, onClose }) {
           </div>
         </div>
 
-        <button className="focus-ring mt-5 w-full rounded-md bg-mint px-4 py-3 font-black text-white">Save expense</button>
+        <button className="focus-ring mt-5 w-full rounded-md bg-mint px-4 py-3 font-black text-white">
+          {isEditing ? "Save changes" : "Save expense"}
+        </button>
       </form>
     </div>
   );
